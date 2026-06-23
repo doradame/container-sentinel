@@ -269,12 +269,13 @@ EOF
 download_files() {
     info "Downloading Container Sentinel..."
 
-    local files=("Dockerfile" "analyze.sh" "sentinel.sh")
-    local total=${#files[@]}
-    
-    for i in "${!files[@]}"; do
-        progress_bar $((i + 1)) "$total" "${files[$i]}"
-        curl -sSL "${BASE_URL}/${files[$i]}" -o "$INSTALL_DIR/${files[$i]}"
+    local total=3
+    local current=0
+
+    for file in Dockerfile analyze.sh sentinel.sh; do
+        current=$((current + 1))
+        progress_bar "$current" "$total" "$file"
+        curl -sSL "${BASE_URL}/${file}" -o "$INSTALL_DIR/${file}"
         sleep 0.3
     done
     echo ""
