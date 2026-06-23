@@ -7,7 +7,15 @@ Automated container vulnerability scanner with AI-powered summaries and optional
 ## Quick Install
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/doradame/container-sentinel/main/install.sh | bash
+bash <(curl -sSL https://raw.githubusercontent.com/doradame/container-sentinel/main/install.sh)
+```
+
+Or if you prefer to inspect first:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/doradame/container-sentinel/main/install.sh -o install.sh
+less install.sh   # review it
+bash install.sh
 ```
 
 ## What it does

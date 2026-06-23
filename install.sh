@@ -2,7 +2,12 @@
 set -euo pipefail
 
 # Container Sentinel Installer
-# curl -sSL https://raw.githubusercontent.com/doradame/container-sentinel/main/install.sh | bash
+#
+# USAGE (download and run — required for interactive prompts):
+#   bash <(curl -sSL https://raw.githubusercontent.com/doradame/container-sentinel/main/install.sh)
+#
+# Alternative:
+#   curl -sSL https://raw.githubusercontent.com/doradame/container-sentinel/main/install.sh -o /tmp/install-sentinel.sh && bash /tmp/install-sentinel.sh
 
 REPO="doradame/container-sentinel"
 BRANCH="main"
@@ -388,4 +393,7 @@ main() {
     finish_banner
 }
 
-main "$@"
+# Ensure entire script is parsed before execution.
+# This is critical for `curl | bash` — without this, bash may
+# try to execute lines before the full script has been downloaded.
+main "$@"; exit $?
