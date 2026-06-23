@@ -83,6 +83,27 @@ check_staleness() {
     fi
 }
 
+check_disk_space() {
+    local usage
+    usage=$(df -h / | awk 'NR==2 {gsub(/%/,""); print $5}')
+
+    if [[ "$usage" -ge 95 ]]; then
+        echo ""
+        echo -e "  ${RED}${BOLD}┌─────────────────────────────────────────────────────────┐${NC}"
+        echo -e "  ${RED}${BOLD}│  💾 DISK SPACE CRITICAL: ${usage}% used                       │${NC}"
+        echo -e "  ${RED}${BOLD}│                                                         │${NC}"
+        echo -e "  ${RED}│  The scan may fail or reports may not save.             │${NC}"
+        echo -e "  ${RED}│  Free up some space before continuing.                  │${NC}"
+        echo -e "  ${RED}${BOLD}└─────────────────────────────────────────────────────────┘${NC}"
+        echo ""
+        err "Disk usage at ${usage}%. Free space and retry."
+    elif [[ "$usage" -ge 85 ]]; then
+        echo ""
+        echo -e "  ${YELLOW}⚠  Disk usage at ${WHITE}${BOLD}${usage}%${NC}${YELLOW} — keep an eye on it.${NC}"
+        echo ""
+    fi
+}
+
 update_last_scan() {
     if [[ -f "$CONFIG_FILE" ]]; then
         local now
@@ -152,6 +173,7 @@ setup_secrets() {
 run_scan() {
     show_header
     check_staleness
+    check_disk_space
 
     if [[ ! -f "$CONFIG_FILE" ]]; then
         err "Config not found. Run: container-sentinel --setup"
