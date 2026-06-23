@@ -165,7 +165,7 @@ prompt_config() {
     echo -e "    ${MAGENTA}2)${NC} Anthropic ${DIM}(Claude Sonnet, Claude Opus, ...)${NC}"
     echo ""
     while true; do
-        read -rp "  Choose [1/2]: " provider_choice
+        read -rp "  Choose [1/2]: " provider_choice < /dev/tty
         case "$provider_choice" in
             1) LLM_PROVIDER="openai"; break ;;
             2) LLM_PROVIDER="anthropic"; break ;;
@@ -183,7 +183,7 @@ prompt_config() {
         DEFAULT_MODEL="claude-sonnet-4-20250514"
         echo -e "  ${WHITE}${BOLD}Model${NC} ${DIM}(popular: claude-sonnet-4-20250514, claude-opus-4-20250514)${NC}"
     fi
-    read -rp "  Model [$DEFAULT_MODEL]: " LLM_MODEL
+    read -rp "  Model [$DEFAULT_MODEL]: " LLM_MODEL < /dev/tty
     LLM_MODEL="${LLM_MODEL:-$DEFAULT_MODEL}"
     ok "Model: $LLM_MODEL"
     echo ""
@@ -196,7 +196,7 @@ prompt_config() {
         echo -e "  ${DIM}Get yours at: https://console.anthropic.com/settings/keys${NC}"
     fi
     while true; do
-        read -rsp "  🔑 Key: " LLM_API_KEY
+        read -rsp "  🔑 Key: " LLM_API_KEY < /dev/tty
         echo ""
         [[ -n "$LLM_API_KEY" ]] && break
         warn "API key cannot be empty"
@@ -209,17 +209,17 @@ prompt_config() {
     echo -e "  ${YELLOW}${BOLD}📧 Email Reports ${DIM}(optional)${NC}"
     echo -e "  ${DIM}Get vulnerability reports delivered to your inbox via Resend${NC}"
     echo ""
-    read -rp "  Enable email reports? (y/N): " ENABLE_EMAIL
+    read -rp "  Enable email reports? (y/N): " ENABLE_EMAIL < /dev/tty
     RESEND_API_KEY=""
     SENDER_EMAIL=""
     RECIPIENT_EMAIL=""
 
     if [[ "$ENABLE_EMAIL" =~ ^[Yy] ]]; then
         echo ""
-        read -rsp "  Resend API Key: " RESEND_API_KEY
+        read -rsp "  Resend API Key: " RESEND_API_KEY < /dev/tty
         echo ""
-        read -rp "  Sender email (verified on Resend): " SENDER_EMAIL
-        read -rp "  Recipient email: " RECIPIENT_EMAIL
+        read -rp "  Sender email (verified on Resend): " SENDER_EMAIL < /dev/tty
+        read -rp "  Recipient email: " RECIPIENT_EMAIL < /dev/tty
         ok "Email configured: $SENDER_EMAIL → $RECIPIENT_EMAIL"
     else
         info "No email — that's cool, you can add it later with --setup"
@@ -231,7 +231,7 @@ prompt_config() {
     echo -e "  ${BLUE}${BOLD}🕐 Scheduling${NC}"
     echo -e "  ${DIM}Run automatically every Monday at 8:00 AM${NC}"
     echo ""
-    read -rp "  Schedule weekly scan via cron? (y/N): " ENABLE_CRON
+    read -rp "  Schedule weekly scan via cron? (y/N): " ENABLE_CRON < /dev/tty
     echo ""
 }
 
