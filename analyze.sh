@@ -398,6 +398,13 @@ send_email() {
     local subject
     subject="🛡️ Container Sentinel Report — ${HOST_NAME:-unknown} — $(date -u +"%Y-%m-%d")"
 
+    # Ensure from field is properly formatted for Resend
+    local from_field="$SENDER_EMAIL"
+    # If it doesn't contain < > and is just an email, wrap it with a display name
+    if [[ "$from_field" != *"<"* ]]; then
+        from_field="Container Sentinel <${SENDER_EMAIL}>"
+    fi
+
     # Convert markdown to HTML (using jq for proper escaping)
     local html_body
     html_body=$(jq -n --arg report "$report" --arg host "${HOST_NAME:-unknown}" --arg os "${HOST_OS:-unknown}" --arg ip "${HOST_IP:-unknown}" '
@@ -417,7 +424,7 @@ send_email() {
 
     local payload
     payload=$(jq -n \
-        --arg from "$SENDER_EMAIL" \
+        --arg from "$from_field" \
         --arg to "$RECIPIENT_EMAIL" \
         --arg subject "$subject" \
         --arg html "$html_body" \
