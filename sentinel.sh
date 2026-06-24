@@ -303,6 +303,7 @@ show_help() {
     echo -e "    container-sentinel --verbose    ${DIM}Run with detailed output${NC}"
     echo -e "    container-sentinel --dry-run    ${DIM}Show what would happen without scanning${NC}"
     echo -e "    container-sentinel --setup      ${DIM}Reconfigure settings${NC}"
+    echo -e "    container-sentinel --update     ${DIM}Pull latest version and rebuild${NC}"
     echo -e "    container-sentinel --schedule   ${DIM}Setup/modify cron schedule${NC}"
     echo -e "    container-sentinel --uninstall  ${DIM}Remove everything${NC}"
     echo -e "    container-sentinel --version    ${DIM}Show version${NC}"
@@ -364,6 +365,41 @@ do_uninstall() {
     echo ""
 }
 
+do_update() {
+    show_header
+    info "Updating Container Sentinel..."
+    echo ""
+
+    local base_url="https://raw.githubusercontent.com/doradame/container-sentinel/main"
+
+    # Download latest files
+    for file in Dockerfile analyze.sh sentinel.sh; do
+        info "Fetching ${file}..."
+        if curl -sSL "${base_url}/${file}" -o "$CONFIG_DIR/${file}.new"; then
+            mv "$CONFIG_DIR/${file}.new" "$CONFIG_DIR/${file}"
+            ok "${file} updated"
+        else
+            rm -f "$CONFIG_DIR/${file}.new"
+            warn "Failed to download ${file} — keeping current version"
+        fi
+    done
+
+    chmod +x "$CONFIG_DIR/sentinel.sh" "$CONFIG_DIR/analyze.sh"
+    echo ""
+
+    # Rebuild image
+    info "Rebuilding container image..."
+    if docker build -t container-sentinel:latest "$CONFIG_DIR" -f "$CONFIG_DIR/Dockerfile" --quiet; then
+        ok "Image rebuilt successfully"
+    else
+        err "Image build failed"
+    fi
+
+    echo ""
+    ok "Update complete! Run 'container-sentinel' to scan."
+    echo ""
+}
+
 do_schedule() {
     echo ""
     echo -e "  ${BLUE}${BOLD}🕐 Schedule Configuration${NC}"
@@ -403,6 +439,7 @@ do_schedule() {
 case "${1:-}" in
     --help|-h)      show_help ;;
     --setup)        do_setup ;;
+    --update)       do_update ;;
     --uninstall)    do_uninstall ;;
     --schedule)     do_schedule ;;
     --dry-run)      dry_run ;;
