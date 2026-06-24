@@ -1,8 +1,8 @@
 # Container Sentinel - Vulnerability Scanner + AI Analysis
 # Zero-footprint: runs, reports, disappears.
 
-# Pin trivy to a specific version for reproducibility
-FROM aquasec/trivy:0.62.1 AS trivy
+# Pin trivy to a specific version AND digest for supply chain security
+FROM aquasec/trivy:0.62.1@sha256:fc10faf341a1d8fa8256c5ff1a6662ef74dd38b65034c8ce42346cf958a02d5d AS trivy
 
 FROM alpine:3.20
 

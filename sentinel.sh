@@ -205,6 +205,11 @@ run_scan() {
     mkdir -p "$reports_dir"
 
     docker run --rm \
+        --cap-drop=ALL \
+        --security-opt=no-new-privileges \
+        --read-only \
+        --tmpfs /tmp \
+        --tmpfs /root/.cache \
         -v /var/run/docker.sock:/var/run/docker.sock:ro \
         -v "${reports_dir}:/sentinel/reports" \
         -v "${SECRETS_DIR}/llm_api_key:/run/secrets/llm_api_key:ro" \
