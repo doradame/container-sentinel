@@ -1,8 +1,10 @@
 # Container Sentinel 🛡️
 
-Automated container vulnerability scanner with AI-powered summaries and optional email reports.
+A wrapper around [Trivy](https://github.com/aquasecurity/trivy) that scans your running Docker containers for known vulnerabilities, feeds the results to an LLM for a human-readable summary, and optionally emails you the report.
 
-**Zero footprint on your host** — everything runs inside containers. When the scan is done, nothing is left behind. Like a forensic tool.
+We stand on the shoulders of giants — Trivy does the real work. We just glue it together with some AI and a nice terminal experience.
+
+**Minimal footprint** — everything runs inside a hardened container. When the scan is done, we try to leave as little trace as possible. Not quite forensic-grade, but we do our best.
 
 ## Quick Install
 
@@ -10,33 +12,41 @@ Automated container vulnerability scanner with AI-powered summaries and optional
 bash <(curl -sSL https://raw.githubusercontent.com/doradame/container-sentinel/main/install.sh)
 ```
 
-Or if you prefer to inspect first:
+Or if you prefer to inspect first (you should):
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/doradame/container-sentinel/main/install.sh -o install.sh
-less install.sh   # review it
+less install.sh
 bash install.sh
 ```
 
 ## What it does
 
-1. Scans **all running Docker containers** for known vulnerabilities using [Trivy](https://github.com/aquasecurity/trivy) (pinned version for reproducibility)
-2. Sends the results to an **LLM** (OpenAI or Anthropic) for a human-readable summary with remediation suggestions
+1. Scans **all running Docker containers** for HIGH/CRITICAL vulnerabilities using [Trivy](https://github.com/aquasecurity/trivy)
+2. Sends the results to an **LLM** (OpenAI or Anthropic) for a summary with remediation suggestions
 3. **Saves a report** to `~/.container-sentinel/reports/` (always, with automatic rotation)
 4. Optionally **emails you the report** via [Resend](https://resend.com)
-5. Tracks when the last scan ran — if it's been too long, it nags you: *"Toc toc... it's been 3 weeks..."*
+5. Tracks when the last scan ran — if it's been too long, it reminds you
 
 ## Requirements
 
 - Docker (that's it)
 
-## Security
+## Security considerations
+
+We tried to be careful, but this is a small project — not a hardened enterprise product. Here's what we do:
 
 - **API keys are passed via mounted secret files**, not environment variables (invisible to `docker inspect`)
-- The Docker socket is mounted **read-only**
-- The sentinel container is **excluded from its own scan** (no infinite loops)
-- Secrets are **securely wiped** after each run
-- Config file permissions: `600` (owner-only)
+- Docker socket is mounted **read-only** (but honestly, r/o on the socket doesn't mean much — it's still the Docker socket)
+- The sentinel container runs with **zero capabilities** (`--cap-drop=ALL`)
+- **Read-only filesystem** with tmpfs for temp files only
+- **`--security-opt=no-new-privileges`** — no privilege escalation
+- Trivy image is **pinned to a specific SHA256 digest** (supply chain protection)
+- The sentinel container is **excluded from its own scan**
+- Secrets are **wiped** after each run
+- Config file permissions: `600`
+
+The Docker socket remains a risk — there's no way around that if you want to scan running containers. If you know a better way, PRs welcome.
 
 ## Configuration
 
@@ -56,19 +66,19 @@ Config is stored in `~/.container-sentinel/config` (mode 600).
 ## Usage
 
 ```bash
-# Run a scan now
+# Run a scan
 container-sentinel
 
-# Run with verbose output
+# Verbose output
 container-sentinel --verbose
 
-# Dry run — show what would happen without scanning
+# Dry run — show what would happen
 container-sentinel --dry-run
 
 # Reconfigure
 container-sentinel --setup
 
-# Schedule weekly/daily scan (sets up cron)
+# Schedule weekly/daily scans
 container-sentinel --schedule
 
 # Show version
@@ -80,16 +90,9 @@ container-sentinel --uninstall
 
 ## Reports
 
-Reports are **always saved** to `~/.container-sentinel/reports/` as markdown files, regardless of email configuration. Automatic rotation keeps the last 30 reports.
+Reports are **always saved** to `~/.container-sentinel/reports/` as markdown files, regardless of email configuration. Automatic rotation keeps the last 30.
 
-```
-~/.container-sentinel/reports/
-├── sentinel-report_2026-06-24_083012.md
-├── sentinel-report_2026-06-17_080005.md
-└── sentinel-report_2026-06-10_080003.md
-```
-
-Each report includes a server info table:
+Each report includes server info:
 
 | Field | Example |
 |-------|---------|
@@ -105,37 +108,51 @@ Each report includes a server info table:
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  Host (your machine)                            │
+│  Host                                           │
 │                                                 │
 │  sentinel.sh                                    │
 │    ├── writes API key to secret file            │
-│    └── docker run container-sentinel            │
+│    └── docker run (hardened)                    │
 │          ├── reads key from /run/secrets/       │
-│          ├── trivy scan all containers ───┐     │
-│          ├── LLM summarize + suggest      │     │
-│          ├── save report to volume        │     │
-│          └── (optional) email via Resend  │     │
-│                                           │     │
-│  /var/run/docker.sock (ro) ◄──────────────┘     │
+│          ├── trivy scans all containers         │
+│          ├── LLM summarizes findings            │
+│          ├── saves report to volume             │
+│          └── (optional) emails via Resend       │
+│                                                 │
+│  Hardening:                                     │
+│    --cap-drop=ALL                               │
+│    --read-only                                  │
+│    --security-opt=no-new-privileges             │
+│    --tmpfs /tmp --tmpfs /root/.cache            │
 │                                                 │
 │  After run: secrets wiped, container removed    │
 └─────────────────────────────────────────────────┘
 ```
 
-## Error Handling
+## Error handling
 
-- **API key validation** before scanning (fails fast, not after 10 minutes of trivy)
+- **API key validation** before scanning (fails fast)
 - **Retry with exponential backoff** on LLM API calls (handles 429/5xx)
-- **Graceful degradation** — if email fails, report is still saved and displayed
-- **Self-exclusion** — the sentinel container won't scan itself
+- **Disk space check** before starting (warns at 85%, blocks at 95%)
+- **Graceful degradation** — if email fails, report is still saved
+- **Self-exclusion** — won't scan its own container
+
+## Credits
+
+- [Trivy](https://github.com/aquasecurity/trivy) by Aqua Security — the actual vulnerability scanner. Without them, this project wouldn't exist.
+- [Resend](https://resend.com) — for making email not terrible.
+- OpenAI and Anthropic — for the AI summarization.
+
+## Limitations
+
+- The Docker socket gives broad access. We mitigate with hardening, but it's not perfect.
+- LLM analysis quality depends on the model and the amount of vulnerabilities (large scans get truncated).
+- This is a small side project, not a replacement for proper security tooling. Use it alongside your existing practices, not instead of them.
 
 ## Uninstall
 
 ```bash
 container-sentinel --uninstall
-# Removes: ~/.container-sentinel (config, secrets, reports), binary, cron entry
-# Removes the sentinel Docker image
-# Secrets are securely shredded
 ```
 
 ## License
