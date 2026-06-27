@@ -401,6 +401,10 @@ do_update() {
 }
 
 do_schedule() {
+    if ! command -v crontab &>/dev/null; then
+        err "crontab not found. Install cron first (apt install cron / yum install cronie)"
+    fi
+
     echo ""
     echo -e "  ${BLUE}${BOLD}🕐 Schedule Configuration${NC}"
     echo ""

@@ -330,6 +330,10 @@ install_binary() {
 
 setup_cron() {
     if [[ "$ENABLE_CRON" =~ ^[Yy] ]]; then
+        if ! command -v crontab &>/dev/null; then
+            warn "crontab not found — skipping schedule. Install cron and run: container-sentinel --schedule"
+            return
+        fi
         # Weekly scan: Monday at 8:00 AM
         CRON_CMD="0 8 * * 1 $BIN_PATH --cron 2>&1 | logger -t container-sentinel"
         (crontab -l 2>/dev/null | grep -v "container-sentinel"; echo "$CRON_CMD") | crontab -
