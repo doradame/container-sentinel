@@ -208,8 +208,10 @@ run_scan() {
         --cap-drop=ALL \
         --security-opt=no-new-privileges \
         --read-only \
-        --tmpfs /tmp \
-        --tmpfs /root/.cache \
+        --memory=512m \
+        --memory-swap=512m \
+        --tmpfs /tmp:size=100m \
+        --tmpfs /root/.cache:size=256m \
         -v /var/run/docker.sock:/var/run/docker.sock:ro \
         -v "${reports_dir}:/sentinel/reports" \
         -v "${SECRETS_DIR}/llm_api_key:/run/secrets/llm_api_key:ro" \
