@@ -164,6 +164,8 @@ scan_containers() {
     total=$(echo "$containers" | wc -l | tr -d ' ')
     local current=0
     local all_results=""
+    local scanned_ok=0
+    local scan_failed=0
 
     while IFS='|' read -r id image name; do
         current=$((current + 1))
@@ -188,6 +190,10 @@ scan_containers() {
             else
                 ui "    ${GREEN}✔  Clean — no HIGH/CRITICAL vulnerabilities${NC}"
             fi
+            scanned_ok=$((scanned_ok + 1))
+            all_results+="--- Container: ${name} (Image: ${image}) [SCANNED OK] ---"$'\n'
+            all_results+=$(cat "$scan_file")
+            all_results+=$'\n\n'
         else
             local trivy_error
             trivy_error=$(cat "$trivy_stderr" 2>/dev/null | tail -3 || true)
@@ -197,16 +203,27 @@ scan_containers() {
             elif [[ -n "$trivy_error" ]]; then
                 ui "    ${DIM}(run with --verbose to see details)${NC}"
             fi
-            echo '{"Results":[]}' > "$scan_file"
+            scan_failed=$((scan_failed + 1))
+            all_results+="--- Container: ${name} (Image: ${image}) [SCAN FAILED - could not analyze this image] ---"$'\n'
+            all_results+='{"Results":[], "_error": "Trivy could not scan this image. Results are NOT available — do not assume it is clean."}'$'\n\n'
         fi
-
-        all_results+="--- Container: ${name} (Image: ${image}) ---"$'\n'
-        all_results+=$(cat "$scan_file")
-        all_results+=$'\n\n'
 
     done <<< "$containers"
 
+    # Add scan summary for LLM context
+    all_results+="--- SCAN SUMMARY ---"$'\n'
+    all_results+="Successfully scanned: ${scanned_ok}/${total} containers"$'\n'
+    all_results+="Failed to scan: ${scan_failed}/${total} containers"$'\n'
+    if [[ "$scan_failed" -gt 0 ]]; then
+        all_results+="IMPORTANT: Failed scans mean NO vulnerability data is available for those containers. They are NOT confirmed clean — they simply could not be analyzed."$'\n'
+    fi
+    all_results+=$'\n'
+
     ui ""
+    if [[ "$scan_failed" -gt 0 ]]; then
+        ui "  ${YELLOW}⚠  ${scan_failed}/${total} images could not be scanned${NC}"
+        ui ""
+    fi
 
     # Return data on stdout
     echo "$all_results"
