@@ -179,7 +179,6 @@ scan_containers() {
         local trivy_stderr="/tmp/trivy_err_${name}.log"
         if trivy image --format json --severity HIGH,CRITICAL --quiet \
             --scanners vuln \
-            --skip-java-db-update \
             --image-src docker \
             "$image" > "$scan_file" 2>"$trivy_stderr"; then
             local vuln_count
