@@ -243,7 +243,7 @@ run_scan() {
         --read-only \
         --memory=1g \
         --memory-swap=1g \
-        --tmpfs /tmp:size=100m \
+        --tmpfs /tmp:size=768m \
         --tmpfs /root/.cache:size=768m \
         -v /var/run/docker.sock:/var/run/docker.sock:ro \
         -v "${reports_dir}:/sentinel/reports" \
