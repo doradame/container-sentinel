@@ -229,6 +229,79 @@ scan_containers() {
 }
 
 # ─────────────────────────────────────────────────────────────
+# Step 2.5: Pre-filter scan data for LLM (reduce token usage)
+# ─────────────────────────────────────────────────────────────
+prepare_llm_input() {
+    local raw_results="$1"
+    local filtered=""
+
+    # Process each scan file individually
+    for scan_file in "$SCAN_DIR"/*.json; do
+        [[ -f "$scan_file" ]] || continue
+        local container_name
+        container_name=$(basename "$scan_file" .json)
+
+        # Check if this was a failed scan
+        local has_error
+        has_error=$(jq -r '._error // empty' "$scan_file" 2>/dev/null)
+        if [[ -n "$has_error" ]]; then
+            filtered+="## Container: ${container_name} [SCAN FAILED]"$'\n'
+            filtered+="Could not scan this image. Security posture UNKNOWN."$'\n\n'
+            continue
+        fi
+
+        # Extract summary: counts + top vulnerabilities by CVSS
+        local summary
+        summary=$(jq -r '
+            def count_by_sev:
+                [.Results[]?.Vulnerabilities[]? // empty] |
+                group_by(.Severity) |
+                map({severity: .[0].Severity, count: length}) |
+                sort_by(-.count);
+            def top_vulns:
+                [.Results[]?.Vulnerabilities[]? // empty] |
+                sort_by(-.CVSS.nvd.V3Score // -.CVSS.redhat.V3Score // 0) |
+                .[0:10] |
+                map({
+                    id: .VulnerabilityID,
+                    severity: .Severity,
+                    pkg: .PkgName,
+                    installed: .InstalledVersion,
+                    fixed: (.FixedVersion // "no fix"),
+                    title: (.Title // "N/A" | .[0:80])
+                });
+            {
+                total: ([.Results[]?.Vulnerabilities[]? // empty] | length),
+                by_severity: count_by_sev,
+                top_10: top_vulns
+            }
+        ' "$scan_file" 2>/dev/null)
+
+        if [[ -z "$summary" || "$summary" == "null" ]]; then
+            filtered+="## Container: ${container_name} [SCANNED - no results parsed]"$'\n\n'
+            continue
+        fi
+
+        local total
+        total=$(echo "$summary" | jq -r '.total' 2>/dev/null || echo "0")
+
+        filtered+="## Container: ${container_name} (${total} vulnerabilities)"$'\n'
+        filtered+="Severity breakdown: $(echo "$summary" | jq -r '.by_severity | map("\(.severity): \(.count)") | join(", ")' 2>/dev/null)"$'\n'
+        filtered+="Top issues (by CVSS score):"$'\n'
+        filtered+=$(echo "$summary" | jq -r '.top_10[] | "- \(.id) [\(.severity)] \(.pkg) \(.installed) → \(.fixed) : \(.title)"' 2>/dev/null)
+        filtered+=$'\n\n'
+    done
+
+    # Append scan summary
+    local summary_section
+    summary_section=$(echo "$raw_results" | grep -A5 "^--- SCAN SUMMARY ---" || true)
+    filtered+="$summary_section"
+    filtered+=$'\n'
+
+    echo "$filtered"
+}
+
+# ─────────────────────────────────────────────────────────────
 # Step 3: Call LLM for analysis (with retry + backoff)
 # ─────────────────────────────────────────────────────────────
 call_llm() {
@@ -241,12 +314,17 @@ call_llm() {
 
     # Prepare the prompt
     local system_prompt
-    system_prompt="You are a security analyst assistant. Analyze the following Trivy vulnerability scan results from Docker containers running on a server. Provide:
+    system_prompt="You are a security analyst assistant. Analyze the following Trivy vulnerability scan results from Docker containers running on a server.
 
-1. **Executive Summary** - Quick overview of the security posture
-2. **Critical Findings** - List the most severe vulnerabilities, grouped by container
-3. **Remediation Steps** - Specific, actionable steps to fix each issue (e.g., upgrade package X to version Y)
-4. **Risk Assessment** - Overall risk level and what could happen if not addressed
+BE CONCISE. This is an executive summary, not a full report. Provide:
+
+1. **Overview** - One paragraph: how many containers scanned, how many had issues, overall risk level.
+2. **Per Container** - For each container, ONE line: container name, number of vulns, the single most critical one, and the key action (e.g., 'upgrade base image to X').
+3. **Top 3 Actions** - The three most impactful things to do RIGHT NOW, in priority order.
+4. **Containers Not Scanned** - If any containers failed to scan, list them clearly and state that their security posture is UNKNOWN.
+
+Do NOT list every single CVE. Focus on what matters and what to do about it.
+Keep the entire response under 400 words.
 
 Server Information:
 - Hostname: ${HOST_NAME:-unknown}
@@ -256,14 +334,17 @@ Server Information:
 - Docker Version: ${HOST_DOCKER_VERSION:-unknown}
 - Running Containers: ${HOST_CONTAINER_COUNT:-unknown}
 - Compose file(s): ${HOST_COMPOSE_PATHS:-none found}
-- Scan Date: $(date -u +"%Y-%m-%d %H:%M UTC")
+- Scan Date: $(date -u +"%Y-%m-%d %H:%M UTC")"
 
-Keep the output concise but actionable. Use markdown formatting. If there are no vulnerabilities, congratulate the user but remind them to keep scanning regularly."
+    # Pre-filter scan results for LLM: extract only what matters
+    # Full raw stays in the file, LLM gets a digestible summary
+    local llm_input
+    llm_input=$(prepare_llm_input "$scan_results")
 
-    # Truncate scan results if too large (keep under ~100k chars for API limits)
-    local max_chars=90000
-    if [[ ${#scan_results} -gt $max_chars ]]; then
-        scan_results="${scan_results:0:$max_chars}... [TRUNCATED - too many results to fit in one analysis]"
+    # Truncate if still too large (safety net)
+    local max_chars=60000
+    if [[ ${#llm_input} -gt $max_chars ]]; then
+        llm_input="${llm_input:0:$max_chars}... [TRUNCATED]"
     fi
 
     local response=""
@@ -272,9 +353,9 @@ Keep the output concise but actionable. Use markdown formatting. If there are no
 
     for (( attempt=1; attempt<=max_retries; attempt++ )); do
         if [[ "$LLM_PROVIDER" == "openai" ]]; then
-            response=$(call_openai "$system_prompt" "$scan_results" 2>/dev/null) && break
+            response=$(call_openai "$system_prompt" "$llm_input" 2>/dev/null) && break
         elif [[ "$LLM_PROVIDER" == "anthropic" ]]; then
-            response=$(call_anthropic "$system_prompt" "$scan_results" 2>/dev/null) && break
+            response=$(call_anthropic "$system_prompt" "$llm_input" 2>/dev/null) && break
         else
             err "Unknown LLM provider: $LLM_PROVIDER"
         fi
@@ -405,10 +486,29 @@ call_anthropic() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# Step 4: Send email via Resend (optional)
+# Step 4: Save raw scan results (full detail)
+# ─────────────────────────────────────────────────────────────
+save_raw_scan() {
+    local scan_results="$1"
+
+    mkdir -p "$REPORT_DIR"
+
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%d_%H%M%S")
+    local raw_file="${REPORT_DIR}/raw-scan_${timestamp}.txt"
+
+    echo "$scan_results" > "$raw_file"
+    ok "Raw scan saved: ${raw_file}"
+
+    echo "$raw_file"
+}
+
+# ─────────────────────────────────────────────────────────────
+# Step 5: Send email via Resend (optional)
 # ─────────────────────────────────────────────────────────────
 send_email() {
     local report="$1"
+    local raw_file="${2:-}"
 
     if [[ -z "${RESEND_API_KEY:-}" || -z "${SENDER_EMAIL:-}" || -z "${RECIPIENT_EMAIL:-}" ]]; then
         return 0
@@ -452,17 +552,40 @@ send_email() {
     </body></html>"' | jq -r '.')
 
     local payload
-    payload=$(jq -n \
-        --arg from "$from_field" \
-        --arg to "$RECIPIENT_EMAIL" \
-        --arg subject "$subject" \
-        --arg html "$html_body" \
-        '{
-            from: $from,
-            to: [$to],
-            subject: $subject,
-            html: $html
-        }')
+    # Build payload with optional raw scan attachment
+    if [[ -n "$raw_file" && -f "$raw_file" ]]; then
+        local raw_content
+        # Truncate raw to 1MB max for email attachment
+        raw_content=$(head -c 1000000 "$raw_file" | base64 | tr -d '\n')
+        payload=$(jq -n \
+            --arg from "$from_field" \
+            --arg to "$RECIPIENT_EMAIL" \
+            --arg subject "$subject" \
+            --arg html "$html_body" \
+            --arg raw_b64 "$raw_content" \
+            '{
+                from: $from,
+                to: [$to],
+                subject: $subject,
+                html: $html,
+                attachments: [{
+                    filename: "trivy-raw-scan.txt",
+                    content: $raw_b64
+                }]
+            }')
+    else
+        payload=$(jq -n \
+            --arg from "$from_field" \
+            --arg to "$RECIPIENT_EMAIL" \
+            --arg subject "$subject" \
+            --arg html "$html_body" \
+            '{
+                from: $from,
+                to: [$to],
+                subject: $subject,
+                html: $html
+            }')
+    fi
 
     local result
     result=$(curl -sS --max-time 30 https://api.resend.com/emails \
@@ -571,6 +694,10 @@ main() {
     local scan_results
     scan_results=$(scan_containers "$containers")
 
+    # Save raw scan results (full detail, before LLM summarization)
+    local raw_report_file
+    raw_report_file=$(save_raw_scan "$scan_results")
+
     # Analyze with LLM (retry-enabled)
     local report
     report=$(call_llm "$scan_results")
@@ -581,8 +708,8 @@ main() {
     # Display
     display_report "$report"
 
-    # Email (if configured)
-    send_email "$report"
+    # Email (if configured) — summary in body, raw as attachment info
+    send_email "$report" "$raw_report_file"
 }
 
 main "$@"

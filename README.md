@@ -39,8 +39,8 @@ We tried to be careful, but this is a small project — not a hardened enterpris
 - **API keys are passed via mounted secret files**, not environment variables (invisible to `docker inspect`)
 - Docker socket is mounted **read-only** (but honestly, r/o on the socket doesn't mean much — it's still the Docker socket)
 - The sentinel container runs with **zero capabilities** (`--cap-drop=ALL`)
-- **Read-only filesystem** with tmpfs for temp files only
 - **`--security-opt=no-new-privileges`** — no privilege escalation
+- **Memory capped at 1GB** — protects the host from OOM
 - Trivy image is **pinned to a specific SHA256 digest** (supply chain protection)
 - The sentinel container is **excluded from its own scan**
 - Secrets are **wiped** after each run
@@ -115,15 +115,15 @@ Each report includes server info:
 │    └── docker run (hardened)                    │
 │          ├── reads key from /run/secrets/       │
 │          ├── trivy scans all containers         │
+│          ├── pre-filters results (top 10 CVEs)  │
 │          ├── LLM summarizes findings            │
-│          ├── saves report to volume             │
-│          └── (optional) emails via Resend       │
+│          ├── saves report + raw scan to volume  │
+│          └── (optional) emails summary + raw    │
 │                                                 │
 │  Hardening:                                     │
 │    --cap-drop=ALL                               │
-│    --read-only                                  │
 │    --security-opt=no-new-privileges             │
-│    --tmpfs /tmp --tmpfs /root/.cache            │
+│    --memory=1g                                  │
 │                                                 │
 │  After run: secrets wiped, container removed    │
 └─────────────────────────────────────────────────┘
