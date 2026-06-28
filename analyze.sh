@@ -250,46 +250,38 @@ prepare_llm_input() {
             continue
         fi
 
-        # Extract summary: counts + top vulnerabilities by CVSS
-        local summary
-        summary=$(jq -r '
-            def count_by_sev:
-                [.Results[]?.Vulnerabilities[]? // empty] |
-                group_by(.Severity) |
-                map({severity: .[0].Severity, count: length}) |
-                sort_by(-.count);
-            def top_vulns:
-                [.Results[]?.Vulnerabilities[]? // empty] |
-                sort_by(-.CVSS.nvd.V3Score // -.CVSS.redhat.V3Score // 0) |
-                .[0:10] |
-                map({
-                    id: .VulnerabilityID,
-                    severity: .Severity,
-                    pkg: .PkgName,
-                    installed: .InstalledVersion,
-                    fixed: (.FixedVersion // "no fix"),
-                    title: (.Title // "N/A" | .[0:80])
-                });
-            {
-                total: ([.Results[]?.Vulnerabilities[]? // empty] | length),
-                by_severity: count_by_sev,
-                top_10: top_vulns
-            }
-        ' "$scan_file" 2>/dev/null)
+        # Extract summary with robust jq (handles different trivy output formats)
+        local vuln_count
+        vuln_count=$(jq '[.Results[]? | .Vulnerabilities[]?] | length' "$scan_file" 2>/dev/null || echo "0")
 
-        if [[ -z "$summary" || "$summary" == "null" ]]; then
-            filtered+="## Container: ${container_name} [SCANNED - no results parsed]"$'\n\n'
+        if [[ "$vuln_count" == "0" ]]; then
+            filtered+="## Container: ${container_name} (0 vulnerabilities — clean)"$'\n\n'
             continue
         fi
 
-        local total
-        total=$(echo "$summary" | jq -r '.total' 2>/dev/null || echo "0")
+        # Count by severity
+        local severity_breakdown
+        severity_breakdown=$(jq -r '
+            [.Results[]? | .Vulnerabilities[]?] |
+            group_by(.Severity) |
+            map("\(.[0].Severity): \(length)") |
+            join(", ")
+        ' "$scan_file" 2>/dev/null || echo "unknown")
 
-        filtered+="## Container: ${container_name} (${total} vulnerabilities)"$'\n'
-        filtered+="Severity breakdown: $(echo "$summary" | jq -r '.by_severity | map("\(.severity): \(.count)") | join(", ")' 2>/dev/null)"$'\n'
-        filtered+="Top issues (by CVSS score):"$'\n'
-        filtered+=$(echo "$summary" | jq -r '.top_10[] | "- \(.id) [\(.severity)] \(.pkg) \(.installed) → \(.fixed) : \(.title)"' 2>/dev/null)
-        filtered+=$'\n\n'
+        # Top 10 vulns (sorted by severity CRITICAL > HIGH)
+        local top_vulns
+        top_vulns=$(jq -r '
+            [.Results[]? | .Vulnerabilities[]?] |
+            sort_by(if .Severity == "CRITICAL" then 0 elif .Severity == "HIGH" then 1 else 2 end) |
+            .[0:10] |
+            .[] |
+            "- \(.VulnerabilityID) [\(.Severity)] \(.PkgName) \(.InstalledVersion) → \(.FixedVersion // "no fix") : \(.Title // "N/A" | .[0:80])"
+        ' "$scan_file" 2>/dev/null || echo "- (could not parse details)")
+
+        filtered+="## Container: ${container_name} (${vuln_count} vulnerabilities)"$'\n'
+        filtered+="Severity breakdown: ${severity_breakdown}"$'\n'
+        filtered+="Top issues:"$'\n'
+        filtered+="${top_vulns}"$'\n\n'
     done
 
     # Append scan summary
@@ -552,27 +544,45 @@ send_email() {
     </body></html>"' | jq -r '.')
 
     local payload
-    # Build payload with optional raw scan attachment
+    # Build payload — attach raw scan if available and not too large
     if [[ -n "$raw_file" && -f "$raw_file" ]]; then
-        local raw_content
-        # Truncate raw to 1MB max for email attachment
-        raw_content=$(head -c 1000000 "$raw_file" | base64 | tr -d '\n')
-        payload=$(jq -n \
-            --arg from "$from_field" \
-            --arg to "$RECIPIENT_EMAIL" \
-            --arg subject "$subject" \
-            --arg html "$html_body" \
-            --arg raw_b64 "$raw_content" \
-            '{
-                from: $from,
-                to: [$to],
-                subject: $subject,
-                html: $html,
-                attachments: [{
-                    filename: "trivy-raw-scan.txt",
-                    content: $raw_b64
-                }]
-            }')
+        local raw_size
+        raw_size=$(wc -c < "$raw_file" 2>/dev/null || echo "0")
+        # Only attach if under 2MB (Resend limit is 40MB but let's be reasonable)
+        if [[ "$raw_size" -lt 2000000 ]]; then
+            local raw_b64_file="/tmp/raw_b64.txt"
+            base64 < "$raw_file" | tr -d '\n' > "$raw_b64_file"
+            payload=$(jq -n \
+                --arg from "$from_field" \
+                --arg to "$RECIPIENT_EMAIL" \
+                --arg subject "$subject" \
+                --arg html "$html_body" \
+                --rawfile raw_b64 "$raw_b64_file" \
+                '{
+                    from: $from,
+                    to: [$to],
+                    subject: $subject,
+                    html: $html,
+                    attachments: [{
+                        filename: "trivy-raw-scan.txt",
+                        content: $raw_b64
+                    }]
+                }')
+            rm -f "$raw_b64_file"
+        else
+            info "Raw scan too large for email attachment ($(( raw_size / 1024 ))KB) — skipping"
+            payload=$(jq -n \
+                --arg from "$from_field" \
+                --arg to "$RECIPIENT_EMAIL" \
+                --arg subject "$subject" \
+                --arg html "$html_body" \
+                '{
+                    from: $from,
+                    to: [$to],
+                    subject: $subject,
+                    html: $html
+                }')
+        fi
     else
         payload=$(jq -n \
             --arg from "$from_field" \
