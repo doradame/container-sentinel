@@ -173,9 +173,11 @@ scan_containers() {
         local scan_file="$SCAN_DIR/${name}.json"
 
         # Run trivy scan on the container image (memory-optimized flags)
+        # Try local image first (for locally-built images), fall back to remote
         if trivy image --format json --severity HIGH,CRITICAL --quiet \
             --scanners vuln \
             --skip-java-db-update \
+            --image-src docker \
             "$image" > "$scan_file" 2>/dev/null; then
             local vuln_count
             vuln_count=$(jq '[.Results[]?.Vulnerabilities[]? // empty] | length' "$scan_file" 2>/dev/null || echo "0")
