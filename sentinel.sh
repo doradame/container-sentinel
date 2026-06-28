@@ -104,6 +104,38 @@ check_disk_space() {
     fi
 }
 
+check_memory() {
+    # Check available RAM — need at least 512MB free to run trivy safely
+    local avail_mb=0
+
+    if [[ -f /proc/meminfo ]]; then
+        # Linux: MemAvailable is the best metric
+        avail_mb=$(awk '/MemAvailable/ {printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo "0")
+    else
+        # macOS/BSD fallback (for local testing)
+        local page_size free_pages
+        page_size=$(sysctl -n hw.pagesize 2>/dev/null || echo "4096")
+        free_pages=$(vm_stat 2>/dev/null | awk '/Pages free/ {gsub(/\./,""); print $3}' || echo "0")
+        avail_mb=$(( (free_pages * page_size) / 1024 / 1024 ))
+    fi
+
+    if [[ "$avail_mb" -gt 0 && "$avail_mb" -lt 400 ]]; then
+        echo ""
+        echo -e "  ${RED}${BOLD}┌─────────────────────────────────────────────────────────┐${NC}"
+        echo -e "  ${RED}${BOLD}│  🧠 LOW MEMORY: ~${avail_mb}MB available                        │${NC}"
+        echo -e "  ${RED}${BOLD}│                                                         │${NC}"
+        echo -e "  ${RED}│  Trivy needs ~512MB to scan. Running now could freeze   │${NC}"
+        echo -e "  ${RED}│  or crash your server. Free some memory first.          │${NC}"
+        echo -e "  ${RED}${BOLD}└─────────────────────────────────────────────────────────┘${NC}"
+        echo ""
+        err "Only ${avail_mb}MB available. Need at least 400MB free."
+    elif [[ "$avail_mb" -gt 0 && "$avail_mb" -lt 600 ]]; then
+        echo ""
+        echo -e "  ${YELLOW}⚠  Available memory: ${WHITE}${BOLD}${avail_mb}MB${NC}${YELLOW} — tight, but should work.${NC}"
+        echo ""
+    fi
+}
+
 update_last_scan() {
     if [[ -f "$CONFIG_FILE" ]]; then
         local now
@@ -174,6 +206,7 @@ run_scan() {
     show_header
     check_staleness
     check_disk_space
+    check_memory
 
     if [[ ! -f "$CONFIG_FILE" ]]; then
         err "Config not found. Run: container-sentinel --setup"
