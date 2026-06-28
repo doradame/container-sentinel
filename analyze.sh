@@ -174,11 +174,12 @@ scan_containers() {
 
         # Run trivy scan on the container image (memory-optimized flags)
         # Try local image first (for locally-built images), fall back to remote
+        local trivy_stderr="/tmp/trivy_err_${name}.log"
         if trivy image --format json --severity HIGH,CRITICAL --quiet \
             --scanners vuln \
             --skip-java-db-update \
             --image-src docker \
-            "$image" > "$scan_file" 2>/dev/null; then
+            "$image" > "$scan_file" 2>"$trivy_stderr"; then
             local vuln_count
             vuln_count=$(jq '[.Results[]?.Vulnerabilities[]? // empty] | length' "$scan_file" 2>/dev/null || echo "0")
 
@@ -188,7 +189,14 @@ scan_containers() {
                 ui "    ${GREEN}✔  Clean — no HIGH/CRITICAL vulnerabilities${NC}"
             fi
         else
-            ui "    ${YELLOW}⚠  Could not scan image (may need pull)${NC}"
+            local trivy_error
+            trivy_error=$(cat "$trivy_stderr" 2>/dev/null | tail -3 || true)
+            ui "    ${YELLOW}⚠  Could not scan image${NC}"
+            if [[ -n "${VERBOSE:-}" && -n "$trivy_error" ]]; then
+                ui "    ${DIM}${trivy_error}${NC}"
+            elif [[ -n "$trivy_error" ]]; then
+                ui "    ${DIM}(run with --verbose to see details)${NC}"
+            fi
             echo '{"Results":[]}' > "$scan_file"
         fi
 
